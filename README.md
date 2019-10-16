@@ -66,7 +66,7 @@ aws firehose create-delivery-stream \
 ## 2. 配置 DMS 进行数据采集
 DMS 的配置参考[Using Amazon Kinesis Data Streams as a Target for AWS Database Migration Service
 ](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.Kinesis.html)。要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。我们假设您已经正确创建了 Replication instance 和 Endpoints，并经测试可以成功连接。
-在示例代码中，我们从一个 MySQL 版本的 RDS 实例，进行全量和增量的数据抽取，通过 MaxFullLoadSubTasks 设置并发处理 8 张表，ParallelLoadThreads 为 16 表示每张表并发 16 线程进行处理。
+在示例代码中，我们从一个 MySQL 版本的 RDS 实例，进行全量和增量的数据抽取，通过 MaxFullLoadSubTasks 设置并发处理 8 张表，ParallelLoadThreads 为 16 表示每张表并发 16 线程进行处理。需要提醒的是，MySQL Binlog 的格式必须为 Row （默认 Parameter Group 不可更改，更换 Parameter Group 需要手动重启实例方可生效），并且合理设置了日志保留时间（ retention hours），设置方式可以参考[这里](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_LogAccess.Concepts.MySQL.html)。
 ```
 echo '''
 {
@@ -98,12 +98,17 @@ echo '''
 
 echo '''
 {
-  "TableMappings": [
-    {
-      "Type": "Include",
-      "SourceSchema": "employees",
-      "SourceTable": "%"
-    }
+    "rules": [
+        {
+            "rule-type": "selection",
+            "rule-id": "1",
+            "rule-name": "schema-employees-all",
+            "object-locator": {
+                "schema-name": "employees",
+                "table-name": "%"
+            },
+            "rule-action": "include"
+        }
     ]
 }
 ''' > table_mapping.json
