@@ -67,6 +67,7 @@ aws firehose create-delivery-stream \
 DMS 的配置参考[Using Amazon Kinesis Data Streams as a Target for AWS Database Migration Service
 ](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.Kinesis.html)。要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。我们假设您已经正确创建了 Replication instance 和 Endpoints，并经测试可以成功连接。
 在示例代码中，我们从一个 MySQL 版本的 RDS 实例，进行全量和增量的数据抽取，通过 MaxFullLoadSubTasks 设置并发处理 8 张表，ParallelLoadThreads 为 16 表示每张表并发 16 线程进行处理。需要提醒的是，MySQL Binlog 的格式必须为 Row （默认 Parameter Group 不可更改，更换 Parameter Group 需要手动重启实例方可生效），并且合理设置了日志保留时间（ retention hours），设置方式可以参考[这里](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_LogAccess.Concepts.MySQL.html)。
+ARN 在各个组件的详情页，根据实际情况进行替换。
 ```
 echo '''
 {
@@ -115,9 +116,9 @@ echo '''
 
 aws dms create-replication-task \
   --replication-task-identifier "employees-steams" \
-  --source-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:ARSRJBKL7NLRIWN3NSMQW6OHGY \
-  --target-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:TOTJIZQDMJANNC2CY2CNGUVH74 \
-  --replication-instance-arn arn:aws:dms:ap-northeast-1:your_account_id:rep:EIKUGIRSZIHP7TDYCBZ6EUFIFA \
+  --source-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:AAAAAAAAAAAAAAAAAAAAAAAAAA \
+  --target-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:AAAAAAAAAAAAAAAAAAAAAAAAAA \
+  --replication-instance-arn arn:aws:dms:ap-northeast-1:your_account_id:rep:AAAAAAAAAAAAAAAAAAAAAAAAAA \
   --migration-type "full-load-and-cdc" \
   --table-mappings 'file://table_mapping.json' \
   --replication-task-settings 'file://task_settings.json' 
@@ -125,7 +126,7 @@ aws dms create-replication-task \
 当看到任务状态转为 ready 后，启动任务：
 ```
 aws dms start-replication-task \
-  --replication-task-arn arn:aws:dms:ap-northeast-1:your_account_id:task:5M4LJ567IL3RAM4PSVNZUL6DP4 \
+  --replication-task-arn arn:aws:dms:ap-northeast-1:your_account_id:task:AAAAAAAAAAAAAAAAAAAAAAAAAA \
   --start-replication-task-type start-replication
 ```
 
