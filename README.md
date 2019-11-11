@@ -156,7 +156,7 @@ aws dms start-replication-task \
 	}
 }
 ```
-多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 [Development Endpoint 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面]（https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html）。
+多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 [Development Endpoint 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
 
 ### 3.1 初始化，导入必要的包
 ```
