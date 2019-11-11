@@ -69,10 +69,9 @@ aws firehose create-delivery-stream \
 ```
 
 ## 2. 配置 DMS 进行数据采集
-DMS 的配置参考[Using Amazon Kinesis Data Streams as a Target for AWS Database Migration Service
-](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.Kinesis.html)。要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。我们假设您已经正确创建了 Replication instance 和 Endpoints，并经测试可以成功连接。
+DMS 的配置参考[产品文档](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_GettingStarted.html)。要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。
 在示例代码中，我们从一个 MySQL 版本的 RDS 实例，进行全量和增量的数据抽取，通过 MaxFullLoadSubTasks 设置并发处理 8 张表，ParallelLoadThreads 为 16 表示每张表并发 16 线程进行处理。需要提醒的是，MySQL Binlog 的格式必须为 Row （默认 Parameter Group 不可更改，更换 Parameter Group 需要手动重启实例方可生效），并且合理设置了日志保留时间（ retention hours），设置方式可以参考[这里](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_LogAccess.Concepts.MySQL.html)。
-ARN 在各个组件的详情页，根据实际情况进行替换。
+ARN 在各个组件的详情页，根据实际情况进行替换。我们假设您已经正确创建了 Replication instance 和 Endpoints，并经测试可以成功连接。
 ```
 echo '''
 {
@@ -136,9 +135,7 @@ aws dms start-replication-task \
 ```
 
 ## 3. 增加一个 Glue Job 来进行表格分离操作
-可以先创建一个 Glue Crawler ，对 Firehose 投递到 S3 中的内容进行爬取，我们可以看到仅有 metadata 和 data 两个字段。
-![schema_of_source](https://github.com/Nickbehindgfw/split_kinesis_stream_with_glue/raw/master/image/image1.png)  
-每条记录长这个样子：
+可以先创建一个 Glue Crawler (可以参考[产品文档](https://docs.aws.amazon.com/glue/latest/dg/console-crawlers.html))，对 Firehose 投递到 S3 中的内容进行爬取，我们可以看到仅有 metadata 和 data 两个字段。每条记录长这个样子：
 ```
 {
 	"data":	{
@@ -159,7 +156,7 @@ aws dms start-replication-task \
 	}
 }
 ```
-多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 Development Endpoint 和一个 Zeppelin Notebook Server。 
+多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 [Development Endpoint 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面]（https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html）。
 
 ### 3.1 初始化，导入必要的包
 ```
@@ -213,6 +210,6 @@ glueContext.write_dynamic_frame.from_options(\
 ## 4. 总结
 在这个 Demo 中，我们把源表中整个 schema 采集到了一个 Kinesis 数据流里面，再利用 AWS Glue 的 filter 筛选出我们需要的表，并充分利用 AWS Glue DynamicFrame schema on-the-fly 的特性，根据当前数据内容，动态生成表结构。
 
-我们看到，AWS Glue 除了提供了托管的 Spark 集群来承载 ETL 任务外，还提供了结构爬取程序、集中元数据存储，并且通过 DynamicFrame 对 PySpark 进行了扩展，满足了开发中的功能需求。
+我们看到，AWS Glue 提供了托管的 Spark 集群，还提供了结构爬取、集中元数据存储和任务调度功能，并且通过 DynamicFrame 对 PySpark 进行了扩展，可以作为我们一站式 ETL 解决方案。
 
 
