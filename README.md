@@ -33,7 +33,7 @@ aws kinesis create-stream \
   --shard-count 2 \
   --region ap-northeast-1
 ```
-Kinesis Firehose 支持投递到 Redshift、S3、ElasticSearch 和 Splunk，我们这里以 S3 为例。配置前需要定义好 IAM role 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)，对配置中的 your_account_id、role_name 和 bucket_name 根据实际情况进行替换。
+Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存储，目前支持 Redshift、S3、ElasticSearch 和 Splunk，我们这里以 S3 为例。配置前需要定义好 [IAM role](https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html) 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)，对配置中的 your_account_id、role_name 和 bucket_name 根据实际情况进行替换。
 ```
 echo '''
 {
