@@ -37,7 +37,7 @@ Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存�
 ```
 echo '''
 {
-  "RoleARN": "arn:aws:iam::your_acount_id:role/role_name",
+  "RoleARN": "arn:aws:iam::your_acount_id:role/<span style="color:red">role_name</span>",
   "BucketARN": "arn:aws:s3:::bucket_name",
   "Prefix": "source/employees/!{timestamp:yyyy-MM-dd}",
   "ErrorOutputPrefix": "source/errors/!{firehose:error-output-type}-!{timestamp:yyyy-MM-dd}",
