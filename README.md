@@ -37,6 +37,9 @@ sed -i '1625d;s/Insert into/Insert ignore into/g' name_data.sql;
 GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO dms_user;
 ```
 
+整体架构如图所示：
+
+
 ## 1. 新建 Kinesis Data Streams 数据流和 Firehose 投递流
 
 Kinesis Data Streams 的创建非常简单，提供 stream 名称和 shard 数量即可，以下是 CLI 命令示例：
@@ -226,24 +229,29 @@ person_DyF = combined_DyF.filter(f = lambda x: \
 
 转换成 PySpark 的 DataFrame， 通过 select 来去掉字段前缀，并且仅保留 data 字段和 metadata 里面的 timestamp 。
 ```
+# Select columns from DataFrame
 person_DF = person_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
 ```
-可以
-```
+可以看到现在的表结构已经和我们源表结构相似了（除了我们故意增加的 timestamp 字段）:
+
 
 ### 3.5 写入 S3
+
 我们把 DataFrame 转换回 DynamicFrame，然后使用 Parquet 格式写回 S3。为了减少文件的数量，我们通过 repartition 进行了合并。另外，我们使用 gender 作为 partitionKey 展示了目标表分区的功能。当然，在实际使用中，要根据数据量来选择 repartition 的分区数量，防止 OOM；目标表是否分区，分区键的选择也要根据数据分布和查询模式来确定。
+
+S3 路径根据实际情况进行修改。
 ```
 # Write to S3
-tmp_dyf = DynamicFrame.fromDF(employees_DF.repartition(1), glueContext, "temp")
+tmp_dyf = DynamicFrame.fromDF(person_DF.repartition(1), glueContext, "temp")
 glueContext.write_dynamic_frame.from_options(\
     tmp_dyf, \
     "s3",\
-    {"path": "s3://bucket/target/employees/employees/", "partitionKeys": ["gender"]},\
+    {"path": "s3://bucket/target/dms_sample/person/", "partitionKeys": ["first_name"]},\
     "parquet")
 ```
 
 我们通过另外一个 Glue Crawler 来爬取目标表的结构，现在，我们可以使用 Athena 来对目标表进行查询了。
+
 
 ## 4. 总结
 在这个 Demo 中，我们把源表中整个 schema 采集到了一个 Kinesis 数据流里面，再利用 AWS Glue 的 filter 筛选出我们需要的表，并充分利用 AWS Glue DynamicFrame schema on-the-fly 的特性，根据当前数据内容，动态生成表结构。
