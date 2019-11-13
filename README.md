@@ -6,7 +6,7 @@
 关系型数据库是数据分析过程中非常普遍的一个数据源。一般我们会通过 ETL 过程，将数据库中的数据采集并经过清洗、集合、转换，再由后端分析工具产生我们需要的分析结果。
 
 在现代数据仓库架构中，我们推荐基于 Amazon Simple Storage(S3)  的数据湖体系结构，AWS Database Migration Service(DMS) 能帮助我们完成关系型数据库到 S3 的全量和增量数据采集。其操作过程非常简单：
-1. 准备 DMS 环境，包括创建 VPC、子网、IAM 角色和安全组，创建 DMS 子网组；
+1. 准备 DMS 环境，包括创建 VPC、VPC 子网、IAM 角色和 EC2 安全组，创建 DMS 子网组；
 2. 创建 DMS 复制实例，因为 DMS 需要缓存从任务开始时起的数据库变更，所以预留好内存和硬盘应对需要。生产环境下，建议启用 Multi-AZ 保证 DMS 的高可用；
 3. 建立指向源数据库和 S3 的 Endpoints，确保复制实例可以成功连接 Endpoints；
 4. 创建并启动迁移任务，数据库记录就会源源不断的进入S3。
@@ -17,31 +17,34 @@ DMS 会按每个表一个目录的方式，把数据库记录存储为 CSV 或 P
 
 有些时候，我们希望更加迅速的访问到数据库的变更内容，而通过 S3 中转，增加了处理时延，不符合我们的性能需求。这个时候，我们会引入流处理框架。
 
-Amazon Kinesis Data Streams 是在 Amazon 内部和外部都得到广泛使用的流式存储引擎。我们通过 Amazon Kinesis Data Streams，把数据表通过 Kinesis 转化为数据流。不过这种情况下，如果我们想复用这个数据流，进行批式数据处理，会遇到一些问题。当我们通过 Amazon Kinesis Firehose 把数据投递到 S3 后，我们会发现整个流的数据被放置在同一个文件夹下，而且数据是JSON格式，每条记录中包含metadata和data两个一级元素。AWS Glue 的结构爬取程序对记录结构进行解析后，会仅识别为一张只有两个字段的大表。
+Amazon Kinesis Data Streams 是在 Amazon 内部和外部都得到广泛使用的流式存储引擎。我们通过 Amazon Kinesis Data Streams，把数据表通过 Kinesis 转化为数据流。不过这种情况下，如果我们想复用这个数据流，进行批式数据处理，会遇到一些问题：当我们通过 Amazon Kinesis Firehose 把数据投递到 S3 后，我们会发现整个流的数据被放置在同一个文件夹下，而且数据是JSON格式，每条记录中包含metadata和data两个一级元素。AWS Glue 的结构爬取程序对记录结构进行解析后，会仅识别为一张只有两个字段的大表。
 
 如果让每个表格使用独立的数据流，可以解决上述问题，但增加了管理难度；如果另起一个 DMS 进程，则会增加源库负担。是否有更其它方法呢？其实我们可以借助 Glue 对 PySpark 语法的扩展，来灵活处理此问题。
 
 具体来讲，就是使用 filter 这个 Transform 方法，基于 metadata 中的 schema name + table name 对记录进行过滤，把不同的表格内容分离出来。
 
 接下来，我们将通过一个 Demo 来演示具体操作，假设您已经：
-1. 启用了 AWS 东京区域（ap-northeast-1），本次实验假定在东京区域；
+1. 启用了 AWS 东京区域（ap-northeast-1，本次实验假定在东京区域）；
 2. 安装并正确设置了 [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-install.html)；
-3. 创建了一台 MySQL 5.7 版本的 Amazon RDS 服务器； 
+3. 创建了一台 MySQL 5.7 版本的 Amazon RDS 服务器，创建 RDS 实例前先创建一个参数组，并按 [DMS 对 RDS for MySQL 源的要求](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Source.MySQL.html#CHAP_Source.MySQL.AmazonManaged)修改参数组和实例其它设置。示例数据库可以使用 [DMS 示例数据库](https://github.com/aws-samples/aws-database-migration-samples)，在运行 install-rds.sql 建库之前，需要在 aws-database-migration-samples/mysql/sampledb/v1/ 目录下运行以下命令进行一些修正：
+```
+sed -i '1625d;s/Insert into/Insert ignore into/g' name_data.sql;
+```
 
 ## 1. 新建 Kinesis Data Streams 数据流和 Firehose 投递流
-Kinesis Data Streams 的创建非常简单，提供 stream 名称和 shard 数量即可
+Kinesis Data Streams 的创建非常简单，提供 stream 名称和 shard 数量即可，以下是 CLI 命令示例：
 ```
 aws kinesis create-stream \
-  --stream-name "employees" \
+  --stream-name "dms_sample" \
   --shard-count 2 \
   --region ap-northeast-1
 ```
-Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存储，目前支持 Redshift、S3、ElasticSearch 和 Splunk，我们这里以 S3 为例。配置前需要定义好 [IAM role](https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html) 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)，对配置中的 your_account_id、role_name 和 bucket_name 根据实际情况进行替换。
+Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存储，目前支持 Redshift、S3、ElasticSearch 和 Splunk，我们这里以 S3 为例。配置前需要定义好 [IAM role](https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html) 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)，对配置中的 YOUR_ACOUNT_ID、ROLE_NAME 和 BUCKET_NAME 根据实际情况进行替换。
 ```
 echo '''
 {
-  "RoleARN": "arn:aws:iam::your_acount_id:role/<span style="color:red">role_name</span>",
-  "BucketARN": "arn:aws:s3:::bucket_name",
+  "RoleARN": "arn:aws:iam::YOUR_ACOUNT_ID:role/ROLE_NAME",
+  "BucketARN": "arn:aws:s3:::BUCKET_NAME",
   "Prefix": "source/employees/!{timestamp:yyyy-MM-dd}",
   "ErrorOutputPrefix": "source/errors/!{firehose:error-output-type}-!{timestamp:yyyy-MM-dd}",
   "BufferingHints": {
@@ -59,20 +62,21 @@ echo '''
 
 echo '''
 {
-  "KinesisStreamARN": "arn:aws:kinesis:ap-northeast-1:your_account_id:stream/employees",
+  "KinesisStreamARN": "arn:aws:kinesis:ap-northeast-1:YOUR_ACOUNT_ID:stream/employees",
   "RoleARN": "arn:aws:iam::your_account_id:role/role_name"
 }
 '''> kinesis_settings.json
 
 aws firehose create-delivery-stream \
-  --delivery-stream-name "employees" \
+  --delivery-stream-name "dms_sample" \
   --delivery-stream-type "KinesisStreamAsSource" \
   --kinesis-stream-source-configuration "file://kinesis_settings.json" \
   --s3-destination-configuration "file://s3_settings.json"
 ```
 
 ## 2. 配置 DMS 进行数据采集
-DMS 的配置参考[产品文档](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_GettingStarted.html)。要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。
+参考 DMS [产品文档](https://docs.aws.amazon.com/dms/latest/userguide/CHAP_GettingStarted.html)配置好 DMS 复制实例和 MySQL 源Endpoint ，复制任务配置方式将在下文说明；
+要注意的是，DMS 默认使用单线程向 Kinesis 进行投递，因此我们需要对任务进行配置，增加并发度。
 在示例代码中，我们从一个 MySQL 版本的 RDS 实例，进行全量和增量的数据抽取，通过 MaxFullLoadSubTasks 设置并发处理 8 张表，ParallelLoadThreads 为 16 表示每张表并发 16 线程进行处理。需要提醒的是，MySQL Binlog 的格式必须为 Row （默认 Parameter Group 不可更改，更换 Parameter Group 需要手动重启实例方可生效），并且合理设置了日志保留时间（ retention hours），设置方式可以参考[这里](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_LogAccess.Concepts.MySQL.html)。
 ARN 在各个组件的详情页，根据实际情况进行替换。我们假设您已经正确创建了 Replication instance 和 Endpoints，并经测试可以成功连接。
 ```
