@@ -162,26 +162,31 @@ aws dms start-replication-task \
 ```
 {
 	"data":	{
-		"emp_no":	67147,
-		"birth_date":	"1959-04-05",
-		"first_name":	"Yucai",
-		"last_name":	"Krider",
-		"gender":	"F",
-		"hire_date":	"1990-12-07"
+		"id":	2633753,
+		"sporting_event_id":	52,
+		"sport_location_id":	26,
+		"seat_level":	2,
+		"seat_section":	"30",
+		"seat_row":	"J",
+		"seat":	"19",
+		"ticket_price":	46.570000
 	},
 	"metadata":	{
-		"timestamp":	"2019-10-09T12:04:00.209212Z",
+		"timestamp":	"2019-11-13T09:59:08.059607Z",
 		"record-type":	"data",
 		"operation":	"load",
 		"partition-key-type":	"primary-key",
-		"schema-name":	"employees",
-		"table-name":	"employees"
+		"schema-name":	"dms_sample",
+		"table-name":	"sporting_event_ticket"
 	}
 }
 ```
-多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 [Development Endpoint 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
+多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离。
+Glue 的 Spark 环境支持 Scala 和 Python，下面我们基于 Python 3 来编写代码。为了方便调试，我们可以创建一个 [开发终端节点 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)，开发终端节点的权限设置可参考[文档](https://docs.aws.amazon.com/glue/latest/dg/create-an-iam-role.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
 
 ### 3.1 初始化，导入必要的包
+
+以下以 SSH 登录到开发终端节点，在 Python REPL 环境中执行为例：
 ```
 from pyspark.context import SparkContext
 from pyspark.sql.functions import col
@@ -195,25 +200,35 @@ glueContext = GlueContext(SparkContext.getOrCreate())
 ```
  
 ### 3.2 从 Glue 爬取程序建立的表对象创建一个 DynamicFrame
+
+database 和 table_name 根据 Glue 数据目录中的内容进行修改。
 ```
 # Create a DynamicFrame from AWS Glue Catalog
-combined_DyF = glueContext.create_dynamic_frame.from_catalog(database="source", table_name="employees")
+combined_DyF = glueContext.create_dynamic_frame.from_catalog(database="dms_sample", table_name="source_dms_sample")
 ```
+可以看到现在的数据结构：
+
 
 ### 3.3 根据表名进行过滤
-我们根据 metadata 中的 schema-name 和 table-name 来过筛选出我们需要的表格 employees.employees，因为 Create Table 和 Drop Table 之类的 DDL 语句会生成 data 为空的记录，我们也过滤掉这些记录。
+
+我们根据 metadata 中的 schema-name 和 table-name 来过筛选出我们需要的表格 dms_sample.person，因为 Create Table 和 Drop Table 之类的 DDL 语句会生成 data 为空的记录，我们也过滤掉这些记录。
 ```
-# Acquire rows from "employees" table
-employees_DyF = combined_DyF.filter(f = lambda x: \
-    x["metadata"]["schema-name"] == "employees" and \
-    x["metadata"]["table-name"] == "employees" and \
+# Acquire rows from "person" table
+person_DyF = combined_DyF.filter(f = lambda x: \
+    x["metadata"]["schema-name"] == "dms_sample" and \
+    x["metadata"]["table-name"] == "person" and \
     x["data"] is not None)
 ```
+经过过滤之后的数据结构如下：
+
 
 ### 3.4 去掉字段前缀
+
 转换成 PySpark 的 DataFrame， 通过 select 来去掉字段前缀，并且仅保留 data 字段和 metadata 里面的 timestamp 。
 ```
-employees_DF = employees_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
+person_DF = person_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
+```
+可以
 ```
 
 ### 3.5 写入 S3
