@@ -38,7 +38,7 @@ GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO dms_user;
 ```
 
 整体架构如图所示：
-
+![architecture](image/image8.png)
 
 ## 1. 新建 Kinesis Data Streams 数据流和 Firehose 投递流
 
