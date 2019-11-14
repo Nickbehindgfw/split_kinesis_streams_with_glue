@@ -37,6 +37,16 @@ sed -i '1625d;s/Insert into/Insert ignore into/g' name_data.sql;
 GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO dms_user;
 ```
 
+整体架构如图所示：
+
+
+
+![image8](/Users/haofh/split_kinesis_streams_with_glue/image/image8.png)
+
+
+
+
+
 ## 1. 新建 Kinesis Data Streams 数据流和 Firehose 投递流
 
 Kinesis Data Streams 的创建非常简单，提供 stream 名称和 shard 数量即可，以下是 CLI 命令示例：
@@ -156,32 +166,56 @@ aws dms start-replication-task \
   --region ap-northeast-1
 ```
 
+
+
+在任务详情页，可以查看 DMS 识别并处理的表：
+
+
+
+![image3](/Users/haofh/split_kinesis_streams_with_glue/image/image3.png)
+
+
+
 ## 3. 增加一个 Glue Job 来进行表格分离操作
 
-可以先创建一个 Glue Crawler (可以参考[产品文档](https://docs.aws.amazon.com/glue/latest/dg/console-crawlers.html))，对 Firehose 投递到 S3 中的内容进行爬取，我们可以看到仅有 metadata 和 data 两个字段。每条记录长这个样子：
+可以先创建一个 Glue Crawler (可以参考[产品文档](https://docs.aws.amazon.com/glue/latest/dg/console-crawlers.html))，对 Firehose 投递到 S3 中的内容进行爬取，我们可以看到仅有 metadata 和 data 两个字段。
+
+
+
+![image1](/Users/haofh/split_kinesis_streams_with_glue/image/image1.png)
+
+
+
+每条记录长这个样子：
+
 ```
 {
 	"data":	{
-		"emp_no":	67147,
-		"birth_date":	"1959-04-05",
-		"first_name":	"Yucai",
-		"last_name":	"Krider",
-		"gender":	"F",
-		"hire_date":	"1990-12-07"
+		"id":	2633753,
+		"sporting_event_id":	52,
+		"sport_location_id":	26,
+		"seat_level":	2,
+		"seat_section":	"30",
+		"seat_row":	"J",
+		"seat":	"19",
+		"ticket_price":	46.570000
 	},
 	"metadata":	{
-		"timestamp":	"2019-10-09T12:04:00.209212Z",
+		"timestamp":	"2019-11-13T09:59:08.059607Z",
 		"record-type":	"data",
 		"operation":	"load",
 		"partition-key-type":	"primary-key",
-		"schema-name":	"employees",
-		"table-name":	"employees"
+		"schema-name":	"dms_sample",
+		"table-name":	"sporting_event_ticket"
 	}
 }
 ```
-多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离，Glue 支持 Scala 和 Python，下面我们基于 Python 3.0 来编写 ETL 代码，为了方便调试，我们可以创建一个 [Development Endpoint 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
+多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离。
+Glue 的 Spark 环境支持 Scala 和 Python，下面我们基于 Python 3 来编写代码。为了方便调试，我们可以创建一个 [开发终端节点 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)，开发终端节点的权限设置可参考[文档](https://docs.aws.amazon.com/glue/latest/dg/create-an-iam-role.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
 
 ### 3.1 初始化，导入必要的包
+
+以下以 SSH 登录到开发终端节点，在 Python REPL 环境中执行为例：
 ```
 from pyspark.context import SparkContext
 from pyspark.sql.functions import col
@@ -193,46 +227,90 @@ from awsglue import DynamicFrame
 # Create a Glue context
 glueContext = GlueContext(SparkContext.getOrCreate())
 ```
- 
+
 ### 3.2 从 Glue 爬取程序建立的表对象创建一个 DynamicFrame
+
+database 和 table_name 根据 Glue 数据目录中的内容进行修改。
 ```
 # Create a DynamicFrame from AWS Glue Catalog
-combined_DyF = glueContext.create_dynamic_frame.from_catalog(database="source", table_name="employees")
+combined_DyF = glueContext.create_dynamic_frame.from_catalog(database="dms_sample", table_name="source_dms_sample")
 ```
+可以看到现在的数据结构：
+
+
+
+![image2](/Users/haofh/split_kinesis_streams_with_glue/image/image2.png)
+
+
 
 ### 3.3 根据表名进行过滤
-我们根据 metadata 中的 schema-name 和 table-name 来过筛选出我们需要的表格 employees.employees，因为 Create Table 和 Drop Table 之类的 DDL 语句会生成 data 为空的记录，我们也过滤掉这些记录。
+
+我们根据 metadata 中的 schema-name 和 table-name 来过筛选出我们需要的表格 dms_sample.person，因为 Create Table 和 Drop Table 之类的 DDL 语句会生成 data 为空的记录，我们也过滤掉这些记录。
 ```
-# Acquire rows from "employees" table
-employees_DyF = combined_DyF.filter(f = lambda x: \
-    x["metadata"]["schema-name"] == "employees" and \
-    x["metadata"]["table-name"] == "employees" and \
+# Acquire rows from "person" table
+person_DyF = combined_DyF.filter(f = lambda x: \
+    x["metadata"]["schema-name"] == "dms_sample" and \
+    x["metadata"]["table-name"] == "person" and \
     x["data"] is not None)
 ```
+经过过滤之后的数据结构如下：
+
+
+
+![image4](/Users/haofh/split_kinesis_streams_with_glue/image/image4.png)
+
+
+
 
 ### 3.4 去掉字段前缀
+
 转换成 PySpark 的 DataFrame， 通过 select 来去掉字段前缀，并且仅保留 data 字段和 metadata 里面的 timestamp 。
 ```
-employees_DF = employees_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
+# Select columns from DataFrame
+person_DF = person_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
 ```
+可以看到现在的表结构已经和我们源表结构相似了（除了我们故意增加的 timestamp 字段）。
+
+
+
+- Glue 中的表：
+
+![image5](/Users/haofh/split_kinesis_streams_with_glue/image/image5.png)
+
+
+
+- MySQL 中的源表：
+
+![image6](/Users/haofh/split_kinesis_streams_with_glue/image/image6.png)
+
+
+
 
 ### 3.5 写入 S3
+
 我们把 DataFrame 转换回 DynamicFrame，然后使用 Parquet 格式写回 S3。为了减少文件的数量，我们通过 repartition 进行了合并。另外，我们使用 gender 作为 partitionKey 展示了目标表分区的功能。当然，在实际使用中，要根据数据量来选择 repartition 的分区数量，防止 OOM；目标表是否分区，分区键的选择也要根据数据分布和查询模式来确定。
+
+S3 路径根据实际情况进行修改。
 ```
 # Write to S3
-tmp_dyf = DynamicFrame.fromDF(employees_DF.repartition(1), glueContext, "temp")
+tmp_dyf = DynamicFrame.fromDF(person_DF.repartition(1), glueContext, "temp")
 glueContext.write_dynamic_frame.from_options(\
     tmp_dyf, \
     "s3",\
-    {"path": "s3://bucket/target/employees/employees/", "partitionKeys": ["gender"]},\
+    {"path": "s3://bucket/target/dms_sample/person/", "partitionKeys": ["first_name"]},\
     "parquet")
 ```
 
-我们通过另外一个 Glue Crawler 来爬取目标表的结构，现在，我们可以使用 Athena 来对目标表进行查询了。
+我们通过另外一个 Glue Crawler 来爬取目标表的结构，现在，我们可以使用 Athena 来对目标表进行查询了：
+
+
+
+![image7](/Users/haofh/split_kinesis_streams_with_glue/image/image7.png)
+
+
+
 
 ## 4. 总结
 在这个 Demo 中，我们把源表中整个 schema 采集到了一个 Kinesis 数据流里面，再利用 AWS Glue 的 filter 筛选出我们需要的表，并充分利用 AWS Glue DynamicFrame schema on-the-fly 的特性，根据当前数据内容，动态生成表结构。
 
-我们看到，AWS Glue 提供了托管的 Spark 集群，还提供了结构爬取、集中元数据存储和任务调度功能，并且通过 DynamicFrame 对 PySpark 进行了扩展，可以作为我们一站式 ETL 解决方案。
-
-
+我们看到，AWS Glue 提供了托管的 Spark 集群，还提供了结构爬取、集中元数据存储功能，并且通过 DynamicFrame 对 PySpark 进行了扩展，可以作为我们一站式 ETL 解决方案。
