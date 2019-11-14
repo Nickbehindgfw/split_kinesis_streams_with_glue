@@ -32,13 +32,12 @@ Amazon Kinesis Data Streams 是在 Amazon 内部和外部都得到广泛使用�
 ```
 sed -i '1625d;s/Insert into/Insert ignore into/g' name_data.sql;
 ```
-另外需要在 MySQL 中给 dms_user 读取 Binlog 的权限：
+执行 `install-install-rds.sql` 完成导入后，需要在 MySQL 中给 dms_user 读取 Binlog 的权限：
 ```
 GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO dms_user;
 ```
 
 整体架构如图所示：
-
 
 
 ![image8](/Users/haofh/split_kinesis_streams_with_glue/image/image8.png)
@@ -56,7 +55,7 @@ aws kinesis create-stream \
   --shard-count 2 \
   --region ap-northeast-1
 ```
-Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存储，目前支持 Redshift、S3、ElasticSearch 和 Splunk，我们这里以 S3 为例。配置前需要定义好 [IAM role](https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html#using-iam-s3) 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)。
+Kinesis Firehose 可以把 Kinesis Data Streams 中的数据投递到指定存储，目前支持 Redshift、S3、ElasticSearch 和 Splunk,我们这里以 S3 为例。配置前需要定义好 [IAM role](https://docs.aws.amazon.com/firehose/latest/dev/controlling-access.html#using-iam-s3) 并建好 S3 bucket，ARN 的格式可以参考这个[页面](https://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html)。
 
 下面是创建 Firehose 投递流的 CLI 命令示例，请对配置中的 YOUR_ACOUNT_ID、ROLE_NAME 和 BUCKET_NAME 根据实际情况进行替换。
 ```
@@ -115,17 +114,6 @@ echo '''
   },
   "Logging": {
     "EnableLogging": true
-  },
-  "ControlTablesSettings": {
-    "ControlSchema":"dms",
-    "HistoryTimeslotInMinutes":5,
-    "HistoryTableEnabled": true,
-    "SuspendedTablesTableEnabled": true,
-    "StatusTableEnabled": true
-  },
-  "ValidationSettings": {
-     "EnableValidation": false,
-     "ThreadCount": 5
   }
 }
 ''' > task_settings.json
@@ -149,9 +137,9 @@ echo '''
 
 aws dms create-replication-task \
   --replication-task-identifier "dmssample-streams" \
-  --source-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:AAAAAAAAAAAAAAAAAAAAAAAAAA \
-  --target-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:AAAAAAAAAAAAAAAAAAAAAAAAAA \
-  --replication-instance-arn arn:aws:dms:ap-northeast-1:your_account_id:rep:AAAAAAAAAAAAAAAAAAAAAAAAAA \
+  --source-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:SOURCE_ARN \
+  --target-endpoint-arn arn:aws:dms:ap-northeast-1:your_account_id:endpoint:TARGET_ARN \
+  --replication-instance-arn arn:aws:dms:ap-northeast-1:your_account_id:rep:INSTANCE_ARN \
   --migration-type "full-load-and-cdc" \
   --table-mappings 'file://table_mapping.json' \
   --replication-task-settings 'file://task_settings.json' \
@@ -161,7 +149,7 @@ aws dms create-replication-task \
 当看到任务状态转为 ready 后，启动任务：
 ```
 aws dms start-replication-task \
-  --replication-task-arn arn:aws:dms:ap-northeast-1:your_account_id:task:AAAAAAAAAAAAAAAAAAAAAAAAAA \
+  --replication-task-arn arn:aws:dms:ap-northeast-1:your_account_id:task:TASK_ARN \
   --start-replication-task-type start-replication \
   --region ap-northeast-1
 ```
@@ -210,8 +198,7 @@ aws dms start-replication-task \
 	}
 }
 ```
-多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离。
-Glue 的 Spark 环境支持 Scala 和 Python，下面我们基于 Python 3 来编写代码。为了方便调试，我们可以创建一个 [开发终端节点 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)，开发终端节点的权限设置可参考[文档](https://docs.aws.amazon.com/glue/latest/dg/create-an-iam-role.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
+多个表的内容，揉杂在了一起，我们需要通过一个 Glue ETL 任务来进行分离。Glue 的 Spark 环境支持 Scala 和 Python，下面我们基于 Python 3 来编写代码。为了方便调试，我们可以创建一个 [开发终端节点 和一个 Zeppelin Notebook Server](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint.html)，开发终端节点的权限设置可参考[文档](https://docs.aws.amazon.com/glue/latest/dg/create-an-iam-role.html)。 当然也可以直接 SSH 到 Development Endpoint 的 [REPL 调试界面](https://docs.aws.amazon.com/glue/latest/dg/dev-endpoint-tutorial-repl.html)。
 
 ### 3.1 初始化，导入必要的包
 
@@ -239,6 +226,7 @@ combined_DyF = glueContext.create_dynamic_frame.from_catalog(database="dms_sampl
 
 
 
+
 ![image2](/Users/haofh/split_kinesis_streams_with_glue/image/image2.png)
 
 
@@ -257,8 +245,8 @@ person_DyF = combined_DyF.filter(f = lambda x: \
 
 
 
-![image4](/Users/haofh/split_kinesis_streams_with_glue/image/image4.png)
 
+![image4](/Users/haofh/split_kinesis_streams_with_glue/image/image4.png)
 
 
 
@@ -269,9 +257,8 @@ person_DyF = combined_DyF.filter(f = lambda x: \
 # Select columns from DataFrame
 person_DF = person_DyF.toDF().select(col("data.*"), col("metadata.timestamp"))
 ```
+
 可以看到现在的表结构已经和我们源表结构相似了（除了我们故意增加的 timestamp 字段）。
-
-
 
 - Glue 中的表：
 
@@ -308,7 +295,7 @@ glueContext.write_dynamic_frame.from_options(\
 ![image7](/Users/haofh/split_kinesis_streams_with_glue/image/image7.png)
 
 
-
+=======
 
 ## 4. 总结
 在这个 Demo 中，我们把源表中整个 schema 采集到了一个 Kinesis 数据流里面，再利用 AWS Glue 的 filter 筛选出我们需要的表，并充分利用 AWS Glue DynamicFrame schema on-the-fly 的特性，根据当前数据内容，动态生成表结构。
